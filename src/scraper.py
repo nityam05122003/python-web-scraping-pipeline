@@ -6,7 +6,7 @@ Provides a BookScraper class that yields raw book data.
 """
 
 import logging
-from typing import Iterator, Dict, Any
+from typing import Iterator, Dict, Any, Optional
 from urllib.parse import urljoin
 
 import requests
@@ -42,15 +42,22 @@ class BookScraper:
         })
         self.timeout = timeout
 
-    def _get_page(self, url: str) -> BeautifulSoup:
-        """Download a page and parse it with BeautifulSoup."""
+    def fetch_page(self, url: str) -> Optional[str]:
+        """Download a page and return its HTML text, or None on request failure."""
         try:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
-            return BeautifulSoup(response.text, "html.parser")
-        except Exception as exc:
+            return response.text
+        except requests.RequestException as exc:
             logger.error("Failed to fetch %s: %s", url, exc)
-            raise
+            return None
+
+    def _get_page(self, url: str) -> Optional[BeautifulSoup]:
+        """Download a page and parse it with BeautifulSoup."""
+        html = self.fetch_page(url)
+        if html is None:
+            return None
+        return BeautifulSoup(html, "html.parser")
 
     def _parse_book_card(self, card) -> Dict[str, Any]:
         """Extract raw fields from a single product card."""
@@ -84,7 +91,11 @@ class BookScraper:
         page_url = self.BASE_URL
         for page_num in range(1, max_pages + 1):
             logger.info("Scraping page %d: %s", page_num, page_url)
-            soup = self._get_page(page_url)
+            html = self.fetch_page(page_url)
+            if not html:
+                logger.warning("Stopping pagination: failed to fetch %s", page_url)
+                break
+            soup = BeautifulSoup(html, "html.parser")
             for card in soup.select("article.product_pod"):
                 data = self._parse_book_card(card)
                 if data:
